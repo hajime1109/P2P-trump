@@ -2,7 +2,8 @@
 import { ref, onMounted } from 'vue'
 import QRCodeVue from 'qrcode.vue'
 import { Html5QrcodeScanner } from 'html5-qrcode'
-import { useQRCode } from './components/QRLogic.vue'
+import { useWebRTC } from './components/useWebRTC.js'
+import { useQRCode } from './components/QRLogic.js'
 
 
 // --- 状態管理 ---
