@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useWebRTC } from './composables/useWebRTC.js'
-import { useQRCode } from './composables/useQRCode.js'
+import { useQRLogic } from './composables/useQRLogic.js'
 
 const {
   status,
@@ -19,7 +19,7 @@ const {
   clearQRCode,
   startScanner,
   stopScanner
-} = useQRCode()
+} = useQRLogic()
 
 const messageInput = ref('')
 
