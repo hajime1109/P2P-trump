@@ -2,6 +2,8 @@
 import { ref, onMounted } from 'vue'
 import QRCodeVue from 'qrcode.vue'
 import { Html5QrcodeScanner } from 'html5-qrcode'
+import { useQRCode } from './components/QRLogic.vue'
+
 
 // --- 状態管理 ---
 const status = ref('切断') // 接続状態
