@@ -6,7 +6,7 @@ import { Html5QrcodeScanner } from 'html5-qrcode'
 /**
  * QRコードの生成とスキャンを管理するコンポーザブル
  */
-export function useQRCode() {
+export function useQRLogic() {
   const qrCodeDataUrl = ref('') // 生成したQRコード画像
   const scanner = ref(null)
   const showScanner = ref(false)
