@@ -1,104 +1,75 @@
 <script setup>
 import { ref } from 'vue'
 import { useWebRTC } from './composables/useWebRTC.js'
-import { useQRLogic } from './composables/useQRLogic.js'
 
 const {
-  status,
+  myRole,
+  connections,
   messages,
-  createOffer,
-  createAnswer,
-  receiveAnswer,
+  hostCreateOffer,
+  hostReceiveAnswer,
+  guestJoin,
   sendMessage
 } = useWebRTC()
 
-const {
-  qrCodeDataUrl,
-  showScanner,
-  generateQRCode,
-  clearQRCode,
-  startScanner,
-  stopScanner
-} = useQRLogic()
+const sdpInput = ref('')
+const sdpOutput = ref('')
+const chatInput = ref('')
 
-const messageInput = ref('')
-
-const handleCreateOffer = async () => {
-  const offer = await createOffer()
-  if (offer) {
-    await generateQRCode(offer)
-  }
+// ホスト: Offer生成
+const onHostStart = async () => {
+  sdpOutput.value = await hostCreateOffer()
 }
 
-const handleScanOffer = () => {
-  clearQRCode()
-  startScanner(async (decodedOffer) => {
-    const answer = await createAnswer(decodedOffer)
-    if (answer) {
-      await generateQRCode(answer)
-    }
-  })
+// ホスト: Answer受信
+const onHostConnect = async () => {
+  await hostReceiveAnswer(sdpInput.value)
+  sdpInput.value = ''
 }
 
-const handleScanAnswer = () => {
-  clearQRCode()
-  startScanner(async (decodedAnswer) => {
-    await receiveAnswer(decodedAnswer)
-  })
+// ゲスト: 参加 (Offer入力 -> Answer出力)
+const onGuestJoin = async () => {
+  sdpOutput.value = await guestJoin(sdpInput.value)
+  sdpInput.value = ''
 }
 
-const handleSendMessage = () => {
-  if (sendMessage(messageInput.value)) {
-    messageInput.value = ''
-  }
+const onSend = () => {
+  sendMessage(chatInput.value)
+  chatInput.value = ''
 }
 </script>
 
 <template>
-  <div>
-    <h1>P2P大富豪</h1>
-    <p><strong>接続状態:</strong> {{ status }}</p>
+  <div style="padding: 20px;">
+    <h2>P2P最小テスト</h2>
+    <p>現在の役割: {{ myRole }} / 接続数: {{ connections.length }}</p>
 
-    <div v-if="showScanner">
-      <div id="qr-reader" style="width: 300px"></div>
-      <button @click="stopScanner">スキャンをキャンセル</button>
+    <hr>
+    
+    <div v-if="connections.length === 0 || myRole === 'host'">
+      <h3>1. シグナリング (SDP交換)</h3>
+      <div style="margin-bottom: 10px;">
+        <button @click="onHostStart">【ホスト】部屋を作る(Offer生成)</button>
+        <button @click="onGuestJoin">【ゲスト】参加する(Answer生成)</button>
+        <button @click="onHostConnect">【ホスト】接続完了(Answer入力)</button>
+      </div>
+
+      <p>コピー用(出力):</p>
+      <textarea v-model="sdpOutput" readonly style="width:100%; height:50px;"></textarea>
+
+      <p>貼り付け用(入力):</p>
+      <textarea v-model="sdpInput" style="width:100%; height:50px;"></textarea>
     </div>
 
-    <div v-if="!showScanner">
-      <div>
-        <h3>ホスト用</h3>
-        <button @click="handleCreateOffer">1. 部屋を作成 (オファーQR生成)</button>
-        <button 
-          @click="handleScanAnswer" 
-          :disabled="status === 'connected'">
-          3. ゲストのアンサーQRをスキャン
-        </button>
-      </div>
+    <hr>
 
-      <hr>
-
-      <div>
-        <h3>プレイヤー用</h3>
-        <button @click="handleScanOffer">2. ホストのオファーQRをスキャン</button>
-      </div>
-
-      <div v-if="qrCodeDataUrl">
-        <p>相手にこのQRをスキャンさせてください:</p>
-        <img :src="qrCodeDataUrl" alt="接続用QRコード" />
+    <h3>2. チャット</h3>
+    <div style="border:1px solid #ccc; height:200px; overflow-y:scroll; margin-bottom:10px;">
+      <div v-for="(m, i) in messages" :key="i">
+        [{{ m.sender }}] {{ m.text }}
       </div>
     </div>
-
-    <div v-if="status === 'connected'">
-      <hr>
-      <h3>チャット</h3>
-      <div>
-        <div v-for="(msg, index) in messages" :key="index">{{ msg }}</div>
-      </div>
-      <form @submit.prevent="handleSendMessage">
-        <input type="text" v-model="messageInput" placeholder="メッセージを入力" />
-        <button type="submit">送信</button>
-      </form>
-    </div>
-
+    <input v-model="chatInput" type="text">
+    <button @click="onSend">送信</button>
   </div>
 </template>

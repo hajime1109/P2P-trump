@@ -1,119 +1,120 @@
 // src/composables/useWebRTC.js
-// WebRTCの接続ロジック（P2P接続、データチャネル管理）
 import { ref } from 'vue'
 
-/**
- * WebRTCのP2P接続を管理するコンポーザブル
- */
 export function useWebRTC() {
-  const status = ref('切断')
-  const messages = ref([])
-  const peerConnection = ref(null)
-  const dataChannel = ref(null)
+  const connections = ref([]) // 接続リスト
+  const messages = ref([])    // チャットログ
+  const myRole = ref('')      // 'host' or 'guest'
 
-  const offerSDP = ref(null)
-  const answerSDP = ref(null)
+  // ホストがAnswer待ちをするための一次変数
+  let tempHostPC = null
 
-  // 接続状態のイベントリスナー
-  const setupConnectionEvents = () => {
-    peerConnection.value.onconnectionstatechange = () => {
-      status.value = peerConnection.value.connectionState
+  // --- 共通: ICE Candidate（接続経路情報）が揃うのを待つ関数 ---
+  // これがないとコピペしてもつながらない
+  const waitToCompleteICE = async (pc) => {
+    if (pc.iceGatheringState === 'complete') return
+    return new Promise(resolve => {
+      pc.onicecandidate = (e) => { if (!e.candidate) resolve() }
+    })
+  }
+
+  // --- ホスト: 1. 部屋を作る (Offer生成) ---
+  const hostCreateOffer = async () => {
+    myRole.value = 'host'
+    const pc = new RTCPeerConnection()
+    const dc = pc.createDataChannel("chat") // ホストがデータチャネル作成
+    
+    // チャンネルのセットアップ
+    setupChannel(pc, dc)
+    
+    // 接続待ちとして保持
+    tempHostPC = pc
+
+    const offer = await pc.createOffer()
+    await pc.setLocalDescription(offer)
+    await waitToCompleteICE(pc)
+
+    return JSON.stringify(pc.localDescription)
+  }
+
+  // --- ホスト: 3. ゲストのAnswerを受け取る ---
+  const hostReceiveAnswer = async (answerText) => {
+    if (!tempHostPC) return
+    const answer = JSON.parse(answerText)
+    await tempHostPC.setRemoteDescription(answer)
+    // 接続完了。リストへの追加は setupChannel 内の onopen で行われる
+    tempHostPC = null 
+  }
+
+  // --- ゲスト: 2. 参加する (Offer受取 -> Answer生成) ---
+  const guestJoin = async (offerText) => {
+    myRole.value = 'guest'
+    const pc = new RTCPeerConnection()
+    
+    // ゲストはホストからチャンネルを受け取る
+    pc.ondatachannel = (e) => {
+      setupChannel(pc, e.channel)
     }
 
-    peerConnection.value.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log('ICE Candidate:', event.candidate)
-        // オフラインのローカル環境ではSDP交換のみで接続できるため、
-        // ICE Candidateの手動交換は省略する
+    const offer = JSON.parse(offerText)
+    await pc.setRemoteDescription(offer)
+    const answer = await pc.createAnswer()
+    await pc.setLocalDescription(answer)
+    await waitToCompleteICE(pc)
+
+    return JSON.stringify(pc.localDescription)
+  }
+
+  // --- 共通: チャンネルのイベント設定とリスト管理 ---
+  const setupChannel = (pc, dc) => {
+    dc.onopen = () => {
+      console.log("接続しました")
+      connections.value.push({ pc, dc }) // ここで初めてリストに追加
+    }
+    
+    dc.onmessage = (e) => {
+      const data = JSON.parse(e.data)
+      messages.value.push(data)
+      
+      // ホストなら、他の人にも転送（ブロードキャスト）
+      if (myRole.value === 'host') {
+        broadcast(JSON.stringify(data), dc)
       }
     }
   }
 
-  // データチャネルのイベントリスナー
-  const setupDataChannelEvents = () => {
-    dataChannel.value.onmessage = (event) => {
-      messages.value.push(`受信: ${event.data}`)
-    }
-    dataChannel.value.onopen = () => console.log('データチャネル開通')
-    dataChannel.value.onclose = () => console.log('データチャネル切断')
+  // --- ホスト用: 送信元以外全員に転送 ---
+  const broadcast = (msgStr, ignoreDC = null) => {
+    connections.value.forEach(conn => {
+      if (conn.dc !== ignoreDC && conn.dc.readyState === 'open') {
+        conn.dc.send(msgStr)
+      }
+    })
   }
 
-  // 接続を初期化 (共通)
-  const initializeConnection = () => {
-    const configuration = { iceServers: [] }
-    peerConnection.value = new RTCPeerConnection(configuration)
-    setupConnectionEvents()
-  }
+  // --- 共通: メッセージ送信 ---
+  const sendMessage = (text) => {
+    const msgObj = { text, sender: myRole.value }
+    const msgStr = JSON.stringify(msgObj)
 
-  // [ホスト用] オファーを作成
-  const createOffer = async () => {
-    initializeConnection()
-    dataChannel.value = peerConnection.value.createDataChannel('chat')
-    setupDataChannelEvents()
-    
-    const offer = await peerConnection.value.createOffer()
-    await peerConnection.value.setLocalDescription(offer)
-    
-    offerSDP.value = JSON.stringify(peerConnection.value.localDescription)
-    return offerSDP.value
-  }
+    // 自分の画面に追加
+    messages.value.push(msgObj)
 
-  // [ゲスト用] アンサーを作成
-  const createAnswer = async (receivedOffer) => {
-    initializeConnection()
-    
-    peerConnection.value.ondatachannel = (event) => {
-      dataChannel.value = event.channel
-      setupDataChannelEvents()
-    }
-
-    try {
-      const offer = JSON.parse(receivedOffer)
-      await peerConnection.value.setRemoteDescription(offer)
-      
-      const answer = await peerConnection.value.createAnswer()
-      await peerConnection.value.setLocalDescription(answer)
-      
-      answerSDP.value = JSON.stringify(peerConnection.value.localDescription)
-      return answerSDP.value
-    } catch (e) {
-      console.error('オファーの解析または設定に失敗:', e)
-      alert('オファーの形式が正しくありません。')
-      return null
-    }
-  }
-
-  // [ホスト用] アンサーを登録
-  const receiveAnswer = async (receivedAnswer) => {
-    try {
-      const answer = JSON.parse(receivedAnswer)
-      await peerConnection.value.setRemoteDescription(answer)
-    } catch (e) {
-      console.error('アンサーの設定に失敗:', e)
-      alert('アンサーの形式が正しくありません。')
-    }
-  }
-
-  // [全員] メッセージ送信
-  const sendMessage = (messageInput) => {
-    if (dataChannel.value && dataChannel.value.readyState === 'open') {
-      dataChannel.value.send(messageInput)
-      messages.value.push(`送信: ${messageInput}`)
-      return true // 送信成功
+    if (myRole.value === 'host') {
+      broadcast(msgStr) // ホストは全員に配る
     } else {
-      alert('接続が確立されていません。')
-      return false // 送信失敗
+      // ゲストはホスト(リストの0番目)に送る
+      connections.value.forEach(conn => conn.dc.send(msgStr))
     }
   }
 
   return {
-    status,
+    myRole,
+    connections,
     messages,
-    offerSDP,
-    answerSDP,
-    createOffer,
-    createAnswer,
-    receiveAnswer,
+    hostCreateOffer,
+    hostReceiveAnswer,
+    guestJoin,
     sendMessage
   }
 }

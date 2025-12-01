@@ -1,17 +1,13 @@
-// src/composables/useQRCode.js
 import { ref, onBeforeUnmount } from 'vue'
 import QRCode from 'qrcode'
 import { Html5QrcodeScanner } from 'html5-qrcode'
 
-/**
- * QRコードの生成とスキャンを管理するコンポーザブル
- */
+
 export function useQRLogic() {
-  const qrCodeDataUrl = ref('') // 生成したQRコード画像
+  const qrCodeDataUrl = ref('') 
   const scanner = ref(null)
   const showScanner = ref(false)
 
-  // QRコードを生成する
   const generateQRCode = async (text) => {
     try {
       qrCodeDataUrl.value = await QRCode.toDataURL(text)
@@ -21,12 +17,10 @@ export function useQRLogic() {
     }
   }
 
-  // QRコードをクリアする
   const clearQRCode = () => {
     qrCodeDataUrl.value = ''
   }
 
-  // スキャナーを停止する
   const stopScanner = () => {
     if (scanner.value) {
       scanner.value.clear().catch(error => {
@@ -37,7 +31,6 @@ export function useQRLogic() {
     showScanner.value = false
   }
 
-  // スキャナーを開始する
   const startScanner = (onScanSuccess) => {
     showScanner.value = true
     setTimeout(() => {
@@ -48,7 +41,7 @@ export function useQRLogic() {
       )
       
       const successCallback = (decodedText) => {
-        stopScanner() // スキャン成功時に自動停止
+        stopScanner() 
         onScanSuccess(decodedText)
       }
       
@@ -56,7 +49,7 @@ export function useQRLogic() {
     }, 100)
   }
 
-  // コンポーネント破棄時にスキャナーを停止
+
   onBeforeUnmount(stopScanner)
 
   return {
