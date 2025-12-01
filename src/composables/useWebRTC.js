@@ -2,32 +2,73 @@
 import { ref } from 'vue'
 
 export function useWebRTC() {
-  const connections = ref([]) // 接続リスト
+  const connections = ref([]) // 接続リスト { id, pc, dc }
   const messages = ref([])    // チャットログ
   const myRole = ref('')      // 'host' or 'guest'
 
-  // ホストがAnswer待ちをするための一次変数
-  let tempHostPC = null
+  let tempHostPC = null       // ホストがAnswer待ちをするための一時変数
 
-  // --- 共通: ICE Candidate（接続経路情報）が揃うのを待つ関数 ---
-  // これがないとコピペしてもつながらない
+  // --- 共通: ICE収集完了を待つ ---
   const waitToCompleteICE = async (pc) => {
     if (pc.iceGatheringState === 'complete') return
     return new Promise(resolve => {
-      pc.onicecandidate = (e) => { if (!e.candidate) resolve() }
+      const check = (e) => { if (!e.candidate) resolve() }
+      pc.onicecandidate = check
+      // 念のためステータス変更も監視（古いブラウザ等の対策）
+      pc.onicegatheringstatechange = () => {
+        if (pc.iceGatheringState === 'complete') resolve()
+      }
     })
   }
 
-  // --- ホスト: 1. 部屋を作る (Offer生成) ---
+  // --- 共通: チャンネル登録とイベント設定 ---
+  const setupChannel = (pc, dc) => {
+    const onConnect = () => {
+      console.log("接続確立！")
+      // 重複登録を防ぐ
+      if (!connections.value.find(c => c.dc === dc)) {
+        connections.value.push({ pc, dc })
+      }
+    }
+
+    // ★重要: すでに開いていたら即実行、そうでなければイベントを待つ
+    if (dc.readyState === 'open') {
+      onConnect()
+    } else {
+      dc.onopen = onConnect
+    }
+
+    // メッセージ受信
+    dc.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        messages.value.push(data)
+        // ホストなら全員に転送（ブロードキャスト）
+        if (myRole.value === 'host') {
+          broadcast(JSON.stringify(data), dc)
+        }
+      } catch (err) {
+        console.error("受信データの解析に失敗:", err)
+      }
+    }
+
+    // ★重要: 切断処理
+    dc.onclose = () => {
+      console.log("切断されました")
+      connections.value = connections.value.filter(c => c.dc !== dc)
+    }
+    
+    // エラー処理
+    dc.onerror = (err) => console.error("DC Error:", err)
+  }
+
+  // --- ホスト: Offer生成 ---
   const hostCreateOffer = async () => {
     myRole.value = 'host'
     const pc = new RTCPeerConnection()
-    const dc = pc.createDataChannel("chat") // ホストがデータチャネル作成
+    const dc = pc.createDataChannel("chat")
     
-    // チャンネルのセットアップ
     setupChannel(pc, dc)
-    
-    // 接続待ちとして保持
     tempHostPC = pc
 
     const offer = await pc.createOffer()
@@ -37,53 +78,42 @@ export function useWebRTC() {
     return JSON.stringify(pc.localDescription)
   }
 
-  // --- ホスト: 3. ゲストのAnswerを受け取る ---
+  // --- ホスト: Answer受信 ---
   const hostReceiveAnswer = async (answerText) => {
-    if (!tempHostPC) return
-    const answer = JSON.parse(answerText)
-    await tempHostPC.setRemoteDescription(answer)
-    // 接続完了。リストへの追加は setupChannel 内の onopen で行われる
-    tempHostPC = null 
+    if (!tempHostPC) return alert("接続待ち状態ではありません")
+    try {
+      const answer = JSON.parse(answerText)
+      await tempHostPC.setRemoteDescription(answer)
+      tempHostPC = null 
+    } catch (e) {
+      alert("Answerの読み取りに失敗: " + e.message)
+    }
   }
 
-  // --- ゲスト: 2. 参加する (Offer受取 -> Answer生成) ---
+  // --- ゲスト: 参加 ---
   const guestJoin = async (offerText) => {
     myRole.value = 'guest'
     const pc = new RTCPeerConnection()
     
-    // ゲストはホストからチャンネルを受け取る
     pc.ondatachannel = (e) => {
       setupChannel(pc, e.channel)
     }
 
-    const offer = JSON.parse(offerText)
-    await pc.setRemoteDescription(offer)
-    const answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
-    await waitToCompleteICE(pc)
+    try {
+      const offer = JSON.parse(offerText)
+      await pc.setRemoteDescription(offer)
+      const answer = await pc.createAnswer()
+      await pc.setLocalDescription(answer)
+      await waitToCompleteICE(pc)
 
-    return JSON.stringify(pc.localDescription)
-  }
-
-  // --- 共通: チャンネルのイベント設定とリスト管理 ---
-  const setupChannel = (pc, dc) => {
-    dc.onopen = () => {
-      console.log("接続しました")
-      connections.value.push({ pc, dc }) // ここで初めてリストに追加
-    }
-    
-    dc.onmessage = (e) => {
-      const data = JSON.parse(e.data)
-      messages.value.push(data)
-      
-      // ホストなら、他の人にも転送（ブロードキャスト）
-      if (myRole.value === 'host') {
-        broadcast(JSON.stringify(data), dc)
-      }
+      return JSON.stringify(pc.localDescription)
+    } catch (e) {
+      alert("Offerの読み取りに失敗: " + e.message)
+      return null
     }
   }
 
-  // --- ホスト用: 送信元以外全員に転送 ---
+  // --- 送信ロジック ---
   const broadcast = (msgStr, ignoreDC = null) => {
     connections.value.forEach(conn => {
       if (conn.dc !== ignoreDC && conn.dc.readyState === 'open') {
@@ -92,19 +122,19 @@ export function useWebRTC() {
     })
   }
 
-  // --- 共通: メッセージ送信 ---
   const sendMessage = (text) => {
+    if (!text) return
     const msgObj = { text, sender: myRole.value }
     const msgStr = JSON.stringify(msgObj)
 
-    // 自分の画面に追加
     messages.value.push(msgObj)
 
     if (myRole.value === 'host') {
-      broadcast(msgStr) // ホストは全員に配る
+      broadcast(msgStr)
     } else {
-      // ゲストはホスト(リストの0番目)に送る
-      connections.value.forEach(conn => conn.dc.send(msgStr))
+      connections.value.forEach(conn => {
+        if (conn.dc.readyState === 'open') conn.dc.send(msgStr)
+      })
     }
   }
 
