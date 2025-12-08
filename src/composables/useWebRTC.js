@@ -2,100 +2,124 @@
 import { ref } from 'vue'
 
 export function useWebRTC() {
-  const connections = ref([]) // 接続リスト { id, pc, dc }
+  const connections = ref([]) // 接続リスト
   const messages = ref([])    // チャットログ
   const myRole = ref('')      // 'host' or 'guest'
 
-  let tempHostPC = null       // ホストがAnswer待ちをするための一時変数
+  // ホストがAnswer待ちをするための一次変数
+  let tempHostPC = null
 
-  // --- 共通: ICE収集完了を待つ ---
-  const waitToCompleteICE = async (pc) => {
-    if (pc.iceGatheringState === 'complete') return
+  // --- 共通: ICE Candidateの収集を確実に待つ関数 ---
+  const setupIceHandling = (pc, label) => {
     return new Promise(resolve => {
-      const check = (e) => { if (!e.candidate) resolve() }
-      pc.onicecandidate = check
-      // 念のためステータス変更も監視（古いブラウザ等の対策）
-      pc.onicegatheringstatechange = () => {
-        if (pc.iceGatheringState === 'complete') resolve()
+      // すでに完了していれば即終了
+      if (pc.iceGatheringState === 'complete') {
+        console.log(`[${label}] ICE収集はすでに完了済み`)
+        resolve()
+        return
+      }
+      
+      const check = () => {
+        if (pc.iceGatheringState === 'complete') {
+          console.log(`[${label}] ICE収集完了！`)
+          pc.removeEventListener('icegatheringstatechange', check)
+          resolve()
+        }
+      }
+      pc.addEventListener('icegatheringstatechange', check)
+      
+      // 念のため onicecandidate でも監視（nullが来たら完了）
+      pc.onicecandidate = (e) => {
+        if (!e.candidate) check() 
       }
     })
   }
 
-  // --- 共通: チャンネル登録とイベント設定 ---
+  // --- 共通: チャンネル設定（重要修正：すれ違い防止） ---
   const setupChannel = (pc, dc) => {
     const onConnect = () => {
-      console.log("接続確立！")
-      // 重複登録を防ぐ
+      console.log("★データチャネルが開通したのだ！")
+      // 重複登録を防ぎつつリストに追加
       if (!connections.value.find(c => c.dc === dc)) {
         connections.value.push({ pc, dc })
       }
     }
 
-    // ★重要: すでに開いていたら即実行、そうでなければイベントを待つ
+    // ★ここが修正点: すでに開いていたら即実行する
     if (dc.readyState === 'open') {
+      console.log("チャネルは既に開いています。即時接続します。")
       onConnect()
     } else {
       dc.onopen = onConnect
     }
-
-    // メッセージ受信
+    
     dc.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data)
         messages.value.push(data)
-        // ホストなら全員に転送（ブロードキャスト）
+        // ホストなら全員に転送
         if (myRole.value === 'host') {
           broadcast(JSON.stringify(data), dc)
         }
       } catch (err) {
-        console.error("受信データの解析に失敗:", err)
+        console.error("受信データ解析エラー:", err)
       }
     }
 
-    // ★重要: 切断処理
+    // 切断処理
     dc.onclose = () => {
       console.log("切断されました")
       connections.value = connections.value.filter(c => c.dc !== dc)
     }
-    
-    // エラー処理
-    dc.onerror = (err) => console.error("DC Error:", err)
   }
 
-  // --- ホスト: Offer生成 ---
+  // --- ホスト: 1. Offer生成 ---
   const hostCreateOffer = async () => {
+    console.log("Host: 処理開始")
     myRole.value = 'host'
     const pc = new RTCPeerConnection()
-    const dc = pc.createDataChannel("chat")
     
+    // 監視準備
+    const icePromise = setupIceHandling(pc, "Host")
+
+    const dc = pc.createDataChannel("chat")
     setupChannel(pc, dc)
     tempHostPC = pc
 
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
-    await waitToCompleteICE(pc)
+
+    console.log("Host: ICE収集中...")
+    await icePromise // 完了待ち
 
     return JSON.stringify(pc.localDescription)
   }
 
-  // --- ホスト: Answer受信 ---
+  // --- ホスト: 3. Answer受信 ---
   const hostReceiveAnswer = async (answerText) => {
+    console.log("Host: Answer受信")
     if (!tempHostPC) return alert("接続待ち状態ではありません")
     try {
       const answer = JSON.parse(answerText)
       await tempHostPC.setRemoteDescription(answer)
+      console.log("Host: RemoteDescription設定完了。開通を待ちます。")
       tempHostPC = null 
     } catch (e) {
-      alert("Answerの読み取りに失敗: " + e.message)
+      alert("エラー: " + e.message)
     }
   }
 
-  // --- ゲスト: 参加 ---
+  // --- ゲスト: 2. 参加 ---
   const guestJoin = async (offerText) => {
+    console.log("Guest: 処理開始")
     myRole.value = 'guest'
     const pc = new RTCPeerConnection()
     
+    // 監視準備
+    const icePromise = setupIceHandling(pc, "Guest")
+
     pc.ondatachannel = (e) => {
+      console.log("Guest: チャンネルを受信しました")
       setupChannel(pc, e.channel)
     }
 
@@ -104,12 +128,14 @@ export function useWebRTC() {
       await pc.setRemoteDescription(offer)
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
-      await waitToCompleteICE(pc)
+
+      console.log("Guest: ICE収集中...")
+      await icePromise // 完了待ち
 
       return JSON.stringify(pc.localDescription)
     } catch (e) {
-      alert("Offerの読み取りに失敗: " + e.message)
-      return null
+      alert("エラー: " + e.message)
+      return ""
     }
   }
 
