@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useWebRTC } from './components/useWebRTC.js'
 import Lobby from './components/Lobby.vue'
 import GameTable from './components/GameTable.vue'
@@ -16,7 +16,15 @@ const {
 
 const isGameStarted = ref(false)
 
+watch(messages, (newMessages) => {
+  const lastMsg = newMessages[newMessages.length - 1]
+  if (lastMsg && lastMsg.text === 'SYSTEM_GAME_START') {
+    isGameStarted.value = true
+  }
+}, { deep: true })
+
 const handleGameStart = () => {
+  sendMessage('SYSTEM_GAME_START')
   isGameStarted.value = true
 }
 </script>
@@ -38,6 +46,8 @@ const handleGameStart = () => {
       v-else
       :my-role="myRole"
       :connections="connections"
+      :sendMessage="sendMessage"
+      :messages="messages"
     />
   </div>
 </template>
