@@ -3,7 +3,7 @@ import { ref } from 'vue'
 export function useGameLogic() {
   const suits = ['s', 'h', 'd', 'c']
   const ranks = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
-  
+
   const createDeck = () => {
     const deck = []
     for (const suit of suits) {

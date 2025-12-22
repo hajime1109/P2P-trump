@@ -11,20 +11,21 @@ const {
   hostCreateOffer,
   hostReceiveAnswer,
   guestJoin,
-  sendMessage
+  sendMessage,
+  sendToPeer
 } = useWebRTC()
 
 const isGameStarted = ref(false)
 
 watch(messages, (newMessages) => {
   const lastMsg = newMessages[newMessages.length - 1]
-  if (lastMsg && lastMsg.text === 'SYSTEM_GAME_START') {
+  if (lastMsg && lastMsg.type === 'SYSTEM_GAME_START') {
     isGameStarted.value = true
   }
 }, { deep: true })
 
 const handleGameStart = () => {
-  sendMessage('SYSTEM_GAME_START')
+  sendMessage({ type: 'SYSTEM_GAME_START' })
   isGameStarted.value = true
 }
 </script>
@@ -47,6 +48,7 @@ const handleGameStart = () => {
       :my-role="myRole"
       :connections="connections"
       :sendMessage="sendMessage"
+      :sendToPeer="sendToPeer"
       :messages="messages"
     />
   </div>

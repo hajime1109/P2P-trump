@@ -104,7 +104,9 @@ const startGame = () => {
     <button v-if="myRole === 'host' && connections.length > 0" @click="startGame">ゲーム開始</button>
 
     <div class="chat">
-      <div v-for="(m, i) in messages" :key="i">[{{ m.sender }}] {{ m.text }}</div>
+      <div v-for="(m, i) in messages" :key="i">
+        <span v-if="m.type === 'chat'">[{{ m.sender }}] {{ m.text }}</span>
+      </div>
       <input v-model="chatInput" @keydown.enter="onSend" placeholder="チャット">
     </div>
   </div>
